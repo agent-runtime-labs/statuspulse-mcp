@@ -1,0 +1,26 @@
+{
+  "name": "statuspulse-mcp",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agent-runtime-labs/statuspulse-mcp.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/agent-runtime-labs/statuspulse-mcp/issues"
+  },
+  "homepage": "https://github.com/agent-runtime-labs/statuspulse-mcp#readme",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^2.0.3",
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "zod": "^4.6.5"
+  }
+}

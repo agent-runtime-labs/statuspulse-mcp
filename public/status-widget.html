@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang='en'>
+  <head>
+    <meta charset='utf-8' />
+    <title>StatusPulse</title>
+    <style>
+      :root { font-family: system-ui, -apple-system, sans-serif; color: #0b0b0f; }
+      body { margin: 0; padding: 16px; background: #f6f8fb; }
+      main { max-width: 420px; margin: 0 auto; background: #fff; border-radius: 16px; padding: 20px; box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08); }
+      header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+      h2 { margin: 0; font-size: 1.2rem; }
+      button { border: none; border-radius: 10px; background: #111bf5; color: #fff; font-weight: 600; padding: 8px 14px; cursor: pointer; }
+      button:disabled { opacity: 0.6; cursor: not-allowed; }
+      .card { display: flex; gap: 12px; align-items: flex-start; background: #f2f4fb; border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; }
+      .dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 4px; flex: none; }
+      .none { background: #16a34a; }
+      .minor { background: #eab308; }
+      .major { background: #f97316; }
+      .critical { background: #dc2626; }
+      .unknown { background: #9ca3af; }
+      .name { font-weight: 600; }
+      .desc { font-size: 0.9rem; color: #4b5563; }
+      .incident { font-size: 0.85rem; color: #b91c1c; margin-top: 4px; }
+      #updated { font-size: 0.75rem; color: #6b7280; margin: 12px 0 0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h2>StatusPulse</h2>
+        <button id='refresh'>Refresh</button>
+      </header>
+      <div id='cards'>Waiting for data…</div>
+      <p id='updated'></p>
+    </main>
+
+    <script type='module'>
+      const cardsEl = document.querySelector('#cards');
+      const updatedEl = document.querySelector('#updated');
+      const refreshEl = document.querySelector('#refresh');
+      const KNOWN = ['none', 'minor', 'major', 'critical'];
+
+      // Draw one card per service
+      const render = (services) => {
+        cardsEl.replaceChildren();
+        for (const s of services) {
+          const card = document.createElement('div');
+          card.className = 'card';
+
+          const dot = document.createElement('div');
+          dot.className = 'dot ' + (KNOWN.includes(s.indicator) ? s.indicator : 'unknown');
+
+          const body = document.createElement('div');
+          const name = document.createElement('div');
+          name.className = 'name';
+          name.textContent = s.name;
+          const desc = document.createElement('div');
+          desc.className = 'desc';
+          desc.textContent = s.description;
+          body.append(name, desc);
+
+          for (const i of s.incidents) {
+            const inc = document.createElement('div');
+            inc.className = 'incident';
+            inc.textContent = i.name + ' (' + i.status + ')';
+            body.append(inc);
+          }
+
+          card.append(dot, body);
+          cardsEl.append(card);
+        }
+        updatedEl.textContent = 'Last refreshed: ' + new Date().toLocaleTimeString();
+      };
+
+      const showResult = (result) => {
+        const services = result?.structuredContent?.services;
+        if (services) render(services);
+      };
+
+      // ---- Talking to ChatGPT (MCP Apps bridge: JSON messages over postMessage) ----
+      let rpcId = 0;
+      const pending = new Map();
+
+      const rpcNotify = (method, params) => {
+        window.parent.postMessage({ jsonrpc: '2.0', method, params }, '*');
+      };
+
+      const rpcRequest = (method, params) =>
+        new Promise((resolve, reject) => {
+          const id = ++rpcId;
+          pending.set(id, { resolve, reject });
+          window.parent.postMessage({ jsonrpc: '2.0', id, method, params }, '*');
+        });
+
+      window.addEventListener('message', (event) => {
+        if (event.source !== window.parent) return;
+        const message = event.data;
+        if (!message || message.jsonrpc !== '2.0') return;
+
+        // A reply to something we asked
+        if (typeof message.id === 'number') {
+          const p = pending.get(message.id);
+          if (!p) return;
+          pending.delete(message.id);
+          if (message.error) p.reject(message.error);
+          else p.resolve(message.result);
+          return;
+        }
+
+        // ChatGPT telling us the tool finished: draw the data
+        if (message.method === 'ui/notifications/tool-result') {
+          showResult(message.params);
+        }
+      });
+
+      // Say hello to ChatGPT so it knows we are ready
+      const bridgeReady = (async () => {
+        await rpcRequest('ui/initialize', {
+          appInfo: { name: 'statuspulse-widget', version: '0.1.0' },
+          appCapabilities: {},
+          protocolVersion: '2026-01-26',
+        });
+        rpcNotify('ui/notifications/initialized', {});
+      })();
+
+      // Refresh button: ask the server again
+      refreshEl.addEventListener('click', async () => {
+        refreshEl.disabled = true;
+        refreshEl.textContent = 'Refreshing…';
+        try {
+          await bridgeReady;
+          const result = await rpcRequest('tools/call', { name: 'get_status', arguments: {} });
+          showResult(result);
+        } catch (error) {
+          console.error('Refresh failed:', error);
+        } finally {
+          refreshEl.disabled = false;
+          refreshEl.textContent = 'Refresh';
+        }
+      });
+    </script>
+  </body>
+</html>
