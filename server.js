@@ -14,9 +14,19 @@ const WIDGET_URI = 'ui://widget/status.html';
 
 // Services we can check. All use the same status page format.
 const SERVICES = {
-  github: { name: 'GitHub', url: 'https://www.githubstatus.com/api/v2/summary.json' },
-  cloudflare: { name: 'Cloudflare', url: 'https://www.cloudflarestatus.com/api/v2/summary.json' },
-  discord: { name: 'Discord', url: 'https://discordstatus.com/api/v2/summary.json' },
+  github: { name: 'GitHub', category: 'Dev tools', url: 'https://www.githubstatus.com/api/v2/summary.json' },
+  cloudflare: { name: 'Cloudflare', category: 'Cloud', url: 'https://www.cloudflarestatus.com/api/v2/summary.json' },
+  discord: { name: 'Discord', category: 'Comms', url: 'https://discordstatus.com/api/v2/summary.json' },
+  openai: { name: 'OpenAI', category: 'AI', url: 'https://status.openai.com/api/v2/summary.json' },
+  claude: { name: 'Claude', category: 'AI', url: 'https://status.claude.com/api/v2/summary.json' },
+  npm: { name: 'npm', category: 'Dev tools', url: 'https://status.npmjs.org/api/v2/summary.json' },
+  vercel: { name: 'Vercel', category: 'Cloud', url: 'https://www.vercel-status.com/api/v2/summary.json' },
+  netlify: { name: 'Netlify', category: 'Cloud', url: 'https://www.netlifystatus.com/api/v2/summary.json' },
+  digitalocean: { name: 'DigitalOcean', category: 'Cloud', url: 'https://status.digitalocean.com/api/v2/summary.json' },
+  twilio: { name: 'Twilio', category: 'Comms', url: 'https://status.twilio.com/api/v2/summary.json' },
+  atlassian: { name: 'Atlassian', category: 'Dev tools', url: 'https://status.atlassian.com/api/v2/summary.json' },
+  figma: { name: 'Figma', category: 'Design', url: 'https://status.figma.com/api/v2/summary.json' },
+  linear: { name: 'Linear', category: 'Dev tools', url: 'https://linearstatus.com/api/v2/summary.json' },
 };
 
 // Describes the shape of the data we send back.
@@ -25,15 +35,26 @@ const outputSchema = {
     z.object({
       id: z.string(),
       name: z.string(),
+      category: z.string(),
       indicator: z.string(),
       description: z.string(),
+      pageUrl: z.string(),
+      affectedComponents: z.array(z.object({ name: z.string(), status: z.string() })),
       incidents: z.array(
-        z.object({ name: z.string(), impact: z.string(), status: z.string() })
+        z.object({
+          name: z.string(),
+          impact: z.string(),
+          status: z.string(),
+          latestUpdate: z.string(),
+        })
       ),
       updatedAt: z.string(),
     })
   ),
 };
+
+// The human-facing status page is the API URL minus its path.
+const pageUrlOf = (svc) => new URL(svc.url).origin;
 
 // Fetch one service. If it fails, return an 'unknown' card instead of crashing.
 async function fetchOne(id) {
@@ -45,12 +66,19 @@ async function fetchOne(id) {
     return {
       id,
       name: svc.name,
+      category: svc.category,
       indicator: String(data.status.indicator),
       description: String(data.status.description),
+      pageUrl: String(data.page?.url ?? pageUrlOf(svc)).replace(/^http:/, 'https:'),
+      affectedComponents: (data.components ?? [])
+        .filter((c) => c.status !== 'operational' && !c.group)
+        .slice(0, 8)
+        .map((c) => ({ name: String(c.name), status: String(c.status) })),
       incidents: (data.incidents ?? []).slice(0, 3).map((i) => ({
         name: String(i.name),
         impact: String(i.impact ?? 'none'),
         status: String(i.status),
+        latestUpdate: String(i.incident_updates?.[0]?.body ?? ''),
       })),
       updatedAt: String(data.page?.updated_at ?? new Date().toISOString()),
     };
@@ -58,8 +86,11 @@ async function fetchOne(id) {
     return {
       id,
       name: svc.name,
+      category: svc.category,
       indicator: 'unknown',
       description: `Could not load: ${err.message}`,
+      pageUrl: pageUrlOf(svc),
+      affectedComponents: [],
       incidents: [],
       updatedAt: new Date().toISOString(),
     };
@@ -91,7 +122,7 @@ function createStatusServer() {
     {
       title: 'Get service status',
       description:
-        'Shows the live status of popular online services: github, cloudflare, discord. Use this when the user asks if a service is down, slow, or healthy. Pass a list of service ids, or leave empty to check all.',
+        `Shows the live status of popular online services: ${Object.keys(SERVICES).join(', ')}. Use this when the user asks if a service is down, slow, or healthy. Pass a list of service ids, or leave empty to check all.`,
       inputSchema: { services: z.array(z.string()).optional() },
       outputSchema,
       _meta: { ui: { resourceUri: WIDGET_URI } },

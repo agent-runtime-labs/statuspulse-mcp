@@ -16,8 +16,9 @@ Built as a learning project for the MCP Apps UI standard.
 
 ## Features
 
-- One tool, `get_status`, that checks GitHub, Cloudflare and Discord (or any list of them you pass)
-- Live widget with green, yellow, orange, red and grey status dots, up to 3 recent incidents per service, and a Refresh button
+- One tool, `get_status`, that checks 13 services (or any list of them you pass)
+- Live widget with green, yellow, orange, red and grey status dots, problems sorted first, and an "All / Issues only" filter
+- Click a card to expand it: affected components, latest incident updates, a per-service "Check again" and a link to the official status page
 - Failure-tolerant: if one status page is unreachable, that card shows "Unknown" and the rest still load
 - Single small server file plus one HTML file, no build step
 
@@ -94,7 +95,7 @@ Try prompts like:
 - "Check all services."
 - "Is Cloudflare having any incidents?"
 
-Available service ids: `github`, `cloudflare`, `discord`.
+Available service ids: `github`, `cloudflare`, `discord`, `openai`, `claude`, `npm`, `vercel`, `netlify`, `digitalocean`, `twilio`, `atlassian`, `figma`, `linear`.
 
 ## Project structure
 
@@ -155,7 +156,8 @@ If ngrok restarted, its address changed, so update the URL in the plugin too.
 
 - [ ] 30-second cache to avoid refetching on every question
 - [ ] AWS, Azure and Google Cloud feeds (different formats, normalised to one shape)
-- [ ] `get_incident_details` tool and click-to-expand cards
+- [x] Click-to-expand cards
+- [ ] `get_incident_details` tool
 - [ ] Deploy to a small host so ngrok isn't needed
 - [ ] Dark mode
 

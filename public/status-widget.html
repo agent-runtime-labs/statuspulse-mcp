@@ -9,18 +9,44 @@
       main { max-width: 420px; margin: 0 auto; background: #fff; border-radius: 16px; padding: 20px; box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08); }
       header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
       h2 { margin: 0; font-size: 1.2rem; }
-      button { border: none; border-radius: 10px; background: #111bf5; color: #fff; font-weight: 600; padding: 8px 14px; cursor: pointer; }
+      button { font: inherit; border: none; border-radius: 10px; background: #111bf5; color: #fff; font-weight: 600; padding: 8px 14px; cursor: pointer; }
       button:disabled { opacity: 0.6; cursor: not-allowed; }
-      .card { display: flex; gap: 12px; align-items: flex-start; background: #f2f4fb; border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; }
+      button:focus-visible { outline: 2px solid #111bf5; outline-offset: 2px; }
+
+      #summary { font-size: 0.9rem; font-weight: 600; border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; background: #dcfce7; color: #166534; }
+      #summary.issues { background: #fee2e2; color: #991b1b; }
+
+      .chips { display: flex; gap: 6px; margin-bottom: 12px; }
+      .chip { background: #eef0f8; color: #374151; padding: 5px 12px; font-size: 0.8rem; border-radius: 999px; }
+      .chip[aria-pressed='true'] { background: #111bf5; color: #fff; }
+
+      .card { background: #f2f4fb; border-radius: 12px; margin-bottom: 8px; transition: background 0.15s; }
+      .card:hover { background: #e9ecf8; }
+      .row { display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left; background: none; color: inherit; font-weight: normal; padding: 12px 14px; border-radius: 12px; }
       .dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 4px; flex: none; }
       .none { background: #16a34a; }
       .minor { background: #eab308; }
       .major { background: #f97316; }
       .critical { background: #dc2626; }
       .unknown { background: #9ca3af; }
+      .main { flex: 1; min-width: 0; }
       .name { font-weight: 600; }
+      .cat { font-size: 0.7rem; font-weight: 500; color: #6b7280; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
       .desc { font-size: 0.9rem; color: #4b5563; }
-      .incident { font-size: 0.85rem; color: #b91c1c; margin-top: 4px; }
+      .chev { flex: none; color: #9ca3af; transition: transform 0.15s; margin-top: 1px; }
+      .card.open .chev { transform: rotate(90deg); }
+
+      .details { display: none; padding: 0 14px 12px 38px; font-size: 0.85rem; }
+      .card.open .details { display: block; }
+      .details h4 { margin: 10px 0 4px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; }
+      .comp { color: #92400e; }
+      .incident-name { font-weight: 600; color: #b91c1c; }
+      .incident-body { color: #4b5563; margin: 2px 0 6px; white-space: pre-wrap; }
+      .ok { color: #166534; }
+      .actions { display: flex; gap: 8px; margin-top: 10px; }
+      .actions button { background: #fff; color: #111bf5; border: 1px solid #c7cbf5; padding: 5px 10px; font-size: 0.8rem; }
+
+      .empty { font-size: 0.9rem; color: #6b7280; padding: 8px 2px; }
       #updated { font-size: 0.75rem; color: #6b7280; margin: 12px 0 0; }
     </style>
   </head>
@@ -30,6 +56,11 @@
         <h2>StatusPulse</h2>
         <button id='refresh'>Refresh</button>
       </header>
+      <div id='summary' hidden></div>
+      <div class='chips' id='chips' hidden>
+        <button class='chip' data-filter='all' aria-pressed='true'>All</button>
+        <button class='chip' data-filter='issues' aria-pressed='false'>Issues only</button>
+      </div>
       <div id='cards'>Waiting for data…</div>
       <p id='updated'></p>
     </main>
@@ -38,44 +69,138 @@
       const cardsEl = document.querySelector('#cards');
       const updatedEl = document.querySelector('#updated');
       const refreshEl = document.querySelector('#refresh');
+      const summaryEl = document.querySelector('#summary');
+      const chipsEl = document.querySelector('#chips');
       const KNOWN = ['none', 'minor', 'major', 'critical'];
 
-      // Draw one card per service
-      const render = (services) => {
-        cardsEl.replaceChildren();
-        for (const s of services) {
-          const card = document.createElement('div');
-          card.className = 'card';
+      // ---- State: the cards live here, rendering just reads it ----
+      let services = []; // current list, in display order
+      const expanded = new Set(); // ids of open cards
+      const refreshing = new Set(); // ids with a per-card refresh in flight
+      let filter = 'all'; // 'all' | 'issues'
 
-          const dot = document.createElement('div');
-          dot.className = 'dot ' + (KNOWN.includes(s.indicator) ? s.indicator : 'unknown');
+      const isIssue = (s) => s.indicator !== 'none';
 
-          const body = document.createElement('div');
-          const name = document.createElement('div');
-          name.className = 'name';
-          name.textContent = s.name;
-          const desc = document.createElement('div');
-          desc.className = 'desc';
-          desc.textContent = s.description;
-          body.append(name, desc);
+      const el = (tag, className, text) => {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      };
 
-          for (const i of s.incidents) {
-            const inc = document.createElement('div');
-            inc.className = 'incident';
-            inc.textContent = i.name + ' (' + i.status + ')';
-            body.append(inc);
+      const renderSummary = () => {
+        const bad = services.filter(isIssue).length;
+        summaryEl.hidden = false;
+        summaryEl.className = bad ? 'issues' : '';
+        summaryEl.textContent = bad
+          ? bad + ' of ' + services.length + ' services have issues'
+          : 'All ' + services.length + ' services operational';
+      };
+
+      const renderDetails = (s) => {
+        const d = el('div', 'details');
+
+        if (s.affectedComponents.length) {
+          d.append(el('h4', '', 'Affected components'));
+          for (const c of s.affectedComponents) {
+            d.append(el('div', 'comp', c.name + ' — ' + c.status.replaceAll('_', ' ')));
           }
-
-          card.append(dot, body);
-          cardsEl.append(card);
         }
-        updatedEl.textContent = 'Last refreshed: ' + new Date().toLocaleTimeString();
+
+        if (s.incidents.length) {
+          d.append(el('h4', '', 'Active incidents'));
+          for (const i of s.incidents) {
+            d.append(el('div', 'incident-name', i.name + ' (' + i.status + ')'));
+            if (i.latestUpdate) d.append(el('div', 'incident-body', i.latestUpdate));
+          }
+        }
+
+        if (!s.affectedComponents.length && !s.incidents.length) {
+          d.append(el('div', 'ok', s.indicator === 'unknown' ? 'No details available.' : 'No active incidents.'));
+        }
+
+        const actions = el('div', 'actions');
+        const again = el('button', '', refreshing.has(s.id) ? 'Checking…' : 'Check again');
+        again.disabled = refreshing.has(s.id);
+        again.addEventListener('click', () => refreshOne(s.id));
+        const open = el('button', '', 'Open status page');
+        open.addEventListener('click', () => openLink(s.pageUrl));
+        actions.append(again, open);
+        d.append(actions);
+        return d;
       };
 
-      const showResult = (result) => {
-        const services = result?.structuredContent?.services;
-        if (services) render(services);
+      const renderCard = (s) => {
+        const card = el('div', 'card' + (expanded.has(s.id) ? ' open' : ''));
+
+        const row = el('button', 'row');
+        row.setAttribute('aria-expanded', String(expanded.has(s.id)));
+        row.addEventListener('click', () => {
+          if (expanded.has(s.id)) expanded.delete(s.id);
+          else expanded.add(s.id);
+          render();
+        });
+
+        const dot = el('div', 'dot ' + (KNOWN.includes(s.indicator) ? s.indicator : 'unknown'));
+        const main = el('div', 'main');
+        const name = el('div', 'name', s.name);
+        name.append(el('span', 'cat', s.category));
+        main.append(name, el('div', 'desc', s.description));
+        row.append(dot, main, el('span', 'chev', '›'));
+
+        card.append(row, renderDetails(s));
+        return card;
       };
+
+      const render = () => {
+        // Keep the user's scroll position when we rebuild the list
+        const y = window.scrollY;
+        cardsEl.replaceChildren();
+
+        if (!services.length) {
+          cardsEl.textContent = 'Waiting for data…';
+          return;
+        }
+
+        renderSummary();
+        chipsEl.hidden = false;
+        for (const chip of chipsEl.children) {
+          chip.setAttribute('aria-pressed', String(chip.dataset.filter === filter));
+        }
+
+        // Show problems first, then alphabetical, so trouble is never buried
+        const visible = services
+          .filter((s) => filter === 'all' || isIssue(s))
+          .sort((a, b) => Number(isIssue(b)) - Number(isIssue(a)) || a.name.localeCompare(b.name));
+
+        if (!visible.length) cardsEl.append(el('div', 'empty', 'No issues right now 🎉'));
+        for (const s of visible) cardsEl.append(renderCard(s));
+
+        updatedEl.textContent = 'Last refreshed: ' + new Date().toLocaleTimeString();
+        window.scrollTo(0, y);
+      };
+
+      // Replace everything (initial result or full refresh)
+      const showResult = (result) => {
+        const next = result?.structuredContent?.services;
+        if (!next) return;
+        services = next;
+        render();
+      };
+
+      // Swap in just one service (per-card refresh)
+      const mergeOne = (result) => {
+        const fresh = result?.structuredContent?.services?.[0];
+        if (!fresh) return;
+        services = services.map((s) => (s.id === fresh.id ? fresh : s));
+      };
+
+      chipsEl.addEventListener('click', (event) => {
+        const chip = event.target.closest('.chip');
+        if (!chip) return;
+        filter = chip.dataset.filter;
+        render();
+      });
 
       // ---- Talking to ChatGPT (MCP Apps bridge: JSON messages over postMessage) ----
       let rpcId = 0;
@@ -116,20 +241,50 @@
       // Say hello to ChatGPT so it knows we are ready
       const bridgeReady = (async () => {
         await rpcRequest('ui/initialize', {
-          appInfo: { name: 'statuspulse-widget', version: '0.1.0' },
+          appInfo: { name: 'statuspulse-widget', version: '0.2.0' },
           appCapabilities: {},
           protocolVersion: '2026-01-26',
         });
         rpcNotify('ui/notifications/initialized', {});
       })();
 
-      // Refresh button: ask the server again
+      // The widget is sandboxed, so ask the host to open links for us
+      const openLink = async (url) => {
+        try {
+          await bridgeReady;
+          await rpcRequest('ui/open-link', { url });
+        } catch (error) {
+          console.error('Could not open link:', error);
+        }
+      };
+
+      // Per-card "Check again": ask the server for just this service
+      const refreshOne = async (id) => {
+        refreshing.add(id);
+        render();
+        try {
+          await bridgeReady;
+          const result = await rpcRequest('tools/call', { name: 'get_status', arguments: { services: [id] } });
+          mergeOne(result);
+        } catch (error) {
+          console.error('Refresh failed:', error);
+        } finally {
+          refreshing.delete(id);
+          render();
+        }
+      };
+
+      // Refresh button: re-check every service currently shown
       refreshEl.addEventListener('click', async () => {
         refreshEl.disabled = true;
         refreshEl.textContent = 'Refreshing…';
         try {
           await bridgeReady;
-          const result = await rpcRequest('tools/call', { name: 'get_status', arguments: {} });
+          const ids = services.map((s) => s.id);
+          const result = await rpcRequest('tools/call', {
+            name: 'get_status',
+            arguments: ids.length ? { services: ids } : {},
+          });
           showResult(result);
         } catch (error) {
           console.error('Refresh failed:', error);
